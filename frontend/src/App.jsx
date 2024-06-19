@@ -28,7 +28,7 @@ function App() {
   const [curve, setCurve] = useState(null);
   const [sig, setSig] = useState(null);
 
-  // generate client's keys when component unmount
+  // generate client's keys when component unmounts
   useEffect(() => {
     // generate ECDH key pair
     const { publicKey, privateKey } = nacl.box.keyPair();
@@ -44,18 +44,17 @@ function App() {
     });
   }, []); 
 
-  // gets the current UTC time
+  
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     // step 1: process timestamp
     handleTime();
 
-    // step 2: TODO: get the other party's public key backend api
+    // step 2: get the other party's public key backend api
     const requestBody = {
       clientPublicKey: Array.from(publicKey),
-  };
-  
+    };
     const response = await axios.get('http://localhost:5001/exchange', requestBody);
     setOtherPartyPublicKey(new Uint8Array(response.data.serverPublicKey));
 
