@@ -2,6 +2,8 @@ import { useState } from 'react'
 import './App.css'
 import { FormControl, Input, InputLabel, Button } from '@mui/material';
 import crypto from 'crypto';
+import nacl from 'tweetnacl';
+import axios from 'axios';
 
 
 function App() {
@@ -12,58 +14,75 @@ function App() {
   const [eightByteTs, setEightByteTs] = useState(null);
   // 32B SHA256 TS (useful with AES 256)
   const [encryptTs, setEncryptTs] = useState(null);
+
   const [encryptMsg, setEncryptMsg] = useState(null);
-  const [encryptkey, setEncryptKey] = useState(null);
+  const [encryptkey, setEncryptKey] = useState(null); //AES
   const [iv, setIV] = useState(null); 
-  const [publicKey, setPublicKey] = useState(null);
+  const [ecdhPublicKey, setEcdhPublicKey] = useState(null);
+  const [ecdhPrivateKey, setEcdhPrivateKey] = useState(null);
+  const [otherPartyPublicKey, setOtherPartyPublicKey] = useState(null);
+  const [sharedSecret, setSharedSecret] = useState(null);
+
+  const [publicKey, setPublicKey] = useState(null); //signature
+  const [privateKey, setPrivateKey] = useState(null);//signature
   const [curve, setCurve] = useState(null);
   const [sig, setSig] = useState(null);
 
+  // generate client's keys when component unmount
+  useEffect(() => {
+    // generate ECDH key pair
+    const { publicKey, privateKey } = nacl.box.keyPair();
+    setEcdhPublicKey(publicKey);
+    setEcdhPrivateKey(privateKey);
+
+    // Generate ECDSA key pair 
+    generateKeyPair(curve, 'ECDSA').then(keyPair => {
+      setPrivateKey(keyPair.privateKey);
+      setPublicKey(keyPair.publicKey);
+    }).catch(error => {
+      console.error('Error generating key pair:', error);
+    });
+  }, []); 
+
   // gets the current UTC time
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    const utcTime = new Date().getTime();
-    const timeArray = getTimeByteArray(utcTime);
-    const prngArray = getRandomByteArray();
-    const concatenatedArray = concatArrays(timeArray, prngArray);
-    const sha256Hash = getSHA256Hash(concatenatedArray);
+
+    // step 1: process timestamp
+    handleTime();
+
+    // step 2: TODO: get the other party's public key backend api
+    const requestBody = {
+      clientPublicKey: Array.from(publicKey),
+  };
+  
+    const response = await axios.get('http://localhost:5001/exchange', requestBody);
+    setOtherPartyPublicKey(new Uint8Array(response.data.serverPublicKey));
+
+    // step 3: perform ECDH key exchange
+    const sharedKey = performKeyExchange(privateKey, otherPublicKey);
+    setSharedSecret(sharedKey); 
+
+    // step 4: encrypting the message with sharedSecret key
     const encrypted = handleEncrypt();
-    
-
-    setTime(utcTime);
-    setEightByteTs(timeArray);
-    setEncryptTs(sha256Hash);
     setEncryptMsg(encrypted);
-    console.log(`Your encrypted message is ${encryptMsg}`);
+
+    // step 5: perform signing 
+    setSig(await signMessage(privateKey));
+
   };
 
-  // converts the current UTC time to an 8-byte array
-  const getTimeByteArray = (time) => {
-    const buffer = new ArrayBuffer(8);
-    const view = new DataView(buffer);
-    view.setBigUint64(0, BigInt(time), false); // Set BigUint64 in big-endian format
-    return new Uint8Array(buffer);
-  };
+  // process all the timestamp stuff
+  const handleTime = async () => {
+    setTime(await new Date().getTime());
+    setEightByteTs(await getTimeByteArray(time));
+    const prngArray = getRandomByteArray();
+    const concatenatedArray = concatArrays(eightByteTs, prngArray);
+    setEncryptTs(await getSHA256Hash(concatenatedArray));
+  }
 
-  // generate a 32-byte random number (satisfy PRNG)
-  const getRandomByteArray = () => {
-    return crypto.randomBytes(32); // Generate 32 random bytes
-  };
 
-  // concatenate the 8-byte time array with the 32-byte random array
-  const concatArrays = (timeArray, prngArray) => {
-    const concatenatedArray = new Uint8Array(timeArray.length + prngArray.length);
-    concatenatedArray.set(timeArray, 0);
-    concatenatedArray.set(prngArray, timeArray.length);
-    return concatenatedArray;
-  };
-
-  // get the SHA-256 hash of the concatenated array in 32 Byte
-  const getSHA256Hash = (array) => {
-    return crypto.createHash('sha256').update(array).digest();
-  };
-
-  //encryption
+  // encryption
   const handleEncrypt = async () => {
     setEncryptKey(await generateKey());
     setIV(generateIV(encryptTs));
@@ -71,12 +90,12 @@ function App() {
     return encrypted;
   };
 
-  //truncate the first 16 byte of the 32 byte TS-enhanced random number to be the IV for EAS-256 GCM
+  // truncate the first 16 byte of the 32 byte TS-enhanced random number to be the IV for EAS-256 GCM
   const generateIV = (num) => {
     return num.slice(0, 16);
   };
 
-  //generate encryption key
+  // generate encryption key
   const generateKey = async () => {
     return window.crypto.subtle.generateKey(
       {
@@ -111,7 +130,7 @@ function App() {
     return buf;
   };
 
-  //decryption
+  // decryption
   const decrypt = async () => {
     if(!runVerification()){
       console.log('Verification Failed');
@@ -130,8 +149,53 @@ function App() {
   };
 
 
+// can create ECDSA with Secp256k1 curve
+const generateKeyPair = async () => {
+    return window.crypto.subtle.generateKey(
+      {
+        name: algorithm,
+        namedCurve: "K-256", // Secp256k1 curve
+      },
+      true,
+      ["sign", "verify"]
+    );
+};
 
-  //transforming the format of public key
+// Function to perform ECDH key exchange
+const performKeyExchange = (privateKey, otherPublicKey) => {
+  // Perform ECDH key exchange using tweetnacl
+  const sharedKey = nacl.box.before(otherPublicKey, privateKey);
+  return sharedKey;
+};
+
+// sign the message: taking SHA256 of the message with the 8B TS, 
+// then converting that to a 32B-BigInteger modulo N (of the ECC256 curve parameter N).
+const signMessage = async (privateKey) => {
+  const msgBuffer = new TextEncoder().encode(message);
+  const tsBuffer = eightByteTs;
+
+  // Concatenate message with the 8-byte timestamp
+  const concatenated = new Uint8Array([...msgBuffer, ...tsBuffer]);
+
+  // Hash the concatenated message and timestamp using SHA-256
+  const hash = await sha256(concatenated);
+
+  // Convert the hash to a 32-byte BigInteger modulo N
+  const ECC_N = new BN('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', 16);
+  const modHashBuffer = toBigIntegerModN(hash, ECC_N);
+
+  // Sign the modHashBuffer using ECDSA with the secp256k1 curve
+  const signAlgorithm = {
+    name: "ECDSA",
+    hash: { name: "SHA-256" },
+  };
+
+  const signature = await window.crypto.subtle.sign(signAlgorithm, privateKey, modHashBuffer);
+  return new Uint8Array(signature);
+};
+  
+
+  //transforming the format of public key (ECDSA)
   const importPublicKey = async () => {
     // Remove the PEM header/footer
     const pemHeader = "-----BEGIN PUBLIC KEY-----";
@@ -182,6 +246,33 @@ function App() {
     const publicTransformed = await importPublicKey(publicKey, curve);
     const isValid = await verifySignature(publicTransformed);
     return isValid;
+  };
+
+  // HELPER FUNCTIONS
+  // converts the current UTC time to an 8-byte array
+  const getTimeByteArray = (time) => {
+    const buffer = new ArrayBuffer(8);
+    const view = new DataView(buffer);
+    view.setBigUint64(0, BigInt(time), false); // Set BigUint64 in big-endian format
+    return new Uint8Array(buffer);
+  };
+
+  // generate a 32-byte random number (satisfy PRNG)
+  const getRandomByteArray = () => {
+    return crypto.randomBytes(32); // Generate 32 random bytes
+  };
+
+  // concatenate the 8-byte time array with the 32-byte random array
+  const concatArrays = (timeArray, prngArray) => {
+    const concatenatedArray = new Uint8Array(timeArray.length + prngArray.length);
+    concatenatedArray.set(timeArray, 0);
+    concatenatedArray.set(prngArray, timeArray.length);
+    return concatenatedArray;
+  };
+
+  // get the SHA-256 hash of the concatenated array in 32 Byte
+  const getSHA256Hash = (array) => {
+    return crypto.createHash('sha256').update(array).digest();
   };
   
 
