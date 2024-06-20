@@ -3,6 +3,8 @@ import './App.css'
 import { FormControl, Input, InputLabel, Button } from '@mui/material';
 import nacl from 'tweetnacl';
 import axios from 'axios';
+import BN from 'bn.js';
+
 //import naclUtil from 'tweetnacl-util';
 
 
@@ -34,8 +36,8 @@ function App() {
     const keyPair = nacl.box.keyPair();nacl.box.keyPair();
     console.log(`Generated personal ECDH public key:`, keyPair.publicKey);
     console.log(`Generated personal ECDH private key:`, keyPair.secretKey);
-    setEcdhPrivateKey(keyPair.secretKey);
-    setEcdhPublicKey(keyPair.publicKey);
+    setEcdhPrivateKey(new Uint8Array(keyPair.secretKey));
+    setEcdhPublicKey(new Uint8Array(keyPair.publicKey));
 
     //Generate ECDSA key pair(uses Curve 25519 by default)
     generateKeyPairECDSA().then(keyPair => {
@@ -49,7 +51,6 @@ function App() {
     });
   }, []); 
 
-  
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -58,7 +59,6 @@ function App() {
     // step 1: process timestamp
     handleTime();
 
-    
     // step 2: exchanging ECDH public key with server
     const requestBody1 = {
       clientPublicKey: Array.from(ecdhPublicKey),
@@ -66,43 +66,62 @@ function App() {
     const response = await axios.post('http://localhost:5001/exchange', requestBody1);
     const serverKey = new Uint8Array(response.data.serverPublicKey);
     setOtherPartyPublicKey(serverKey);
-    console.log( `received server public key`, serverKey);
-
-    
-    // step 3: calculating the shared secret using my private key and server's public key
-    const sharedSec = performKeyExchange();
-    console.log(`Generated shared secret from user's private key and server's public key:`, sharedSec);
-    setSharedSecret(sharedSec); 
-
-    
-    // step 4: generating encryption key based on shared secret and encrypting the message
-    const encrypted = await handleEncrypt();
-    console.log( `The encrypted message is:`, encrypted);
-    setEncryptMsg(encrypted);
-    const base64String = arrayBufferToBase64(encrypted);
-    console.log('In Base64 the encrypted message is:', base64String);
-    /*
-    // step 5: perform signing 
-    setSig(await signMessage(privateKey));
-
-    // step 6: sending message to server side and signature verification
-    const requestBody2 = {
-      encryptMsg,
-      sig,
-      publicKey,
-      time
-    };
-
-    try {
-      const response = await axios.post('http://localhost:5001/verify-signature', requestBody2);
-      setVerificationResponse(response.data.message);
-    } catch (error) {
-      console.error('Error verifying signature:', error);
-      setVerificationResponse('Signature verification failed');
-    }*/
 
   };
 
+  // finishes step 3 and start step 4
+  useEffect(() => {
+    if (otherPartyPublicKey) {
+      console.log(`Received server public key:`, otherPartyPublicKey);
+
+      // Step 3: Calculate the shared secret using my private key and server's public key
+      const sharedSec = performKeyExchange();
+      console.log(`Generated shared secret from user's private key and server's public key:`, sharedSec);
+      setSharedSecret(sharedSec);
+
+      // Step 4: Generate encryption key based on shared secret and encrypt the message
+      handleEncrypt();
+
+    }
+  }, [otherPartyPublicKey]);
+
+  // finishes step 4 and continue step 5 and 6
+  useEffect(() => {
+    if (sharedSecret && iv && encryptkey) {
+      encrypt().then((encrypted) => {
+        console.log(`The encrypted message is:`, encrypted);
+        setEncryptMsg(encrypted);
+        const base64String = arrayBufferToBase64(encrypted);
+        console.log('In Base64 the encrypted message is:', base64String);
+      }).catch(error => {
+        console.error('Encryption failed:', error);
+      });
+
+  
+      // step 5: perform signing
+      signMessage(privateSigKey).then((signature) => {
+        setSig(signature);
+        console.log(`The generated signature is:` , sig);
+      })
+
+    // // step 6: sending message to server side and signature verification
+    // const requestBody2 = {
+    //   encryptMsg,
+    //   sig,
+    //   publicKey,
+    //   time
+    // };
+
+    // try {
+    //   const response = await axios.post('http://localhost:5001/verify-signature', requestBody2);
+    //   setVerificationResponse(response.data.message);
+    // } catch (error) {
+    //   console.error('Error verifying signature:', error);
+    //   setVerificationResponse('Signature verification failed');
+    // }
+    }
+  }, [iv, encryptkey, sharedSecret]);
+  
 
   // process all the timestamp stuff
   const handleTime = async () => {
@@ -129,11 +148,9 @@ function App() {
     const Keyyy = await generateKey();
     console.log( `Generated encryption key:`, Keyyy);
     setEncryptKey(Keyyy);
-    const ivvv = generateIV(encryptTs);
+    const ivvv = await generateIV(encryptTs);
     console.log( `Generated Initialization Vector based on previous 32B Time + PRNG:`, ivvv);
     setIV(ivvv);
-    const encrypted = await encrypt();
-    return encrypted;
   };
 
   // truncate the first 16 byte of the 32 byte TS-enhanced random number to be the IV for EAS-256 GCM
@@ -186,22 +203,22 @@ function App() {
   };
 
   // decryption
-  const decrypt = async () => {
-    if(!runVerification()){
-      console.log('Verification Failed');
-      return;
-    }
-    console.log('Verification Succeeded');
-    const decrypted = await window.crypto.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: iv,
-      },
-      encryptkey,
-      encryptMsg
-    );
-    return ab2str(decrypted);
-  };
+  // const decrypt = async () => {
+  //   if(!runVerification()){
+  //     console.log('Verification Failed');
+  //     return;
+  //   }
+  //   console.log('Verification Succeeded');
+  //   const decrypted = await window.crypto.subtle.decrypt(
+  //     {
+  //       name: 'AES-GCM',
+  //       iv: iv,
+  //     },
+  //     encryptkey,
+  //     encryptMsg
+  //   );
+  //   return ab2str(decrypted);
+  // };
 
 
 // ECDSA with Secp256k1 curve
@@ -223,6 +240,7 @@ const performKeyExchange = () => {
   return sharedKey;
 };
 
+
 // sign the message: taking SHA256 of the message with the 8B TS, 
 // then converting that to a 32B-BigInteger modulo N (of the ECC256 curve parameter N).
 const signMessage = async () => {
@@ -233,7 +251,8 @@ const signMessage = async () => {
   const concatenated = new Uint8Array([...msgBuffer, ...tsBuffer]);
 
   // Hash the concatenated message and timestamp using SHA-256
-  const hash = await sha256(concatenated);
+  const hash = await getSHA256Hash(concatenated);
+  
 
   // Convert the hash to a 32-byte BigInteger modulo N
   const ECC_N = new BN('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', 16);
@@ -303,8 +322,8 @@ const signMessage = async () => {
     return isValid;
   };
 */
-  // HELPER FUNCTIONS
-  // converts the current UTC time to an 8-byte array
+// HELPER FUNCTIONS
+// converts the current UTC time to an 8-byte array
   const getTimeByteArray = (time) => {
     const buffer = new ArrayBuffer(8);
     const view = new DataView(buffer);
@@ -342,6 +361,10 @@ const signMessage = async () => {
       binary += String.fromCharCode(bytes[i]);
     }
     return window.btoa(binary);
+  };
+  const toBigIntegerModN = (hash, ECC_N) => {
+    const bn = new BN(hash);
+    return bn.mod(ECC_N).toArrayLike(Buffer, 'be', 32);
   };
 
   return (
