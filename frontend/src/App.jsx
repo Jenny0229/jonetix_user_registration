@@ -101,8 +101,13 @@ function App() {
       // step 5: perform signing
       signMessage(privateSigKey).then((signature) => {
         setSig(signature);
-        console.log(`The generated signature is:` , sig);
       })
+    }
+  }, [iv, encryptkey, sharedSecret]);
+
+  useEffect(() => {
+    if (sig) {
+      console.log(`The generated signature is:` , sig);
 
     // // step 6: sending message to server side and signature verification
     // const requestBody2 = {
@@ -120,7 +125,7 @@ function App() {
     //   setVerificationResponse('Signature verification failed');
     // }
     }
-  }, [iv, encryptkey, sharedSecret]);
+  }, [sig]);
   
 
   // process all the timestamp stuff
@@ -246,17 +251,17 @@ const performKeyExchange = () => {
 const signMessage = async () => {
   const msgBuffer = new TextEncoder().encode(message);
   const tsBuffer = eightByteTs;
-
   // Concatenate message with the 8-byte timestamp
   const concatenated = new Uint8Array([...msgBuffer, ...tsBuffer]);
-
   // Hash the concatenated message and timestamp using SHA-256
   const hash = await getSHA256Hash(concatenated);
-  
 
   // Convert the hash to a 32-byte BigInteger modulo N
   const ECC_N = new BN('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', 16);
   const modHashBuffer = toBigIntegerModN(hash, ECC_N);
+
+  // Convert BN to Uint8Array
+  const modHashArrayBuffer = new Uint8Array(modHashBuffer.toArrayLike(Uint8Array));
 
   // Sign the modHashBuffer using ECDSA with the secp256k1 curve
   const signAlgorithm = {
@@ -264,7 +269,7 @@ const signMessage = async () => {
     hash: { name: "SHA-256" },
   };
 
-  const signature = await window.crypto.subtle.sign(signAlgorithm, privateKey, modHashBuffer);
+  const signature = await window.crypto.subtle.sign(signAlgorithm, privateSigKey, modHashArrayBuffer);
   return new Uint8Array(signature);
 };
   
@@ -362,10 +367,13 @@ const signMessage = async () => {
     }
     return window.btoa(binary);
   };
-  const toBigIntegerModN = (hash, ECC_N) => {
-    const bn = new BN(hash);
-    return bn.mod(ECC_N).toArrayLike(Buffer, 'be', 32);
+  const toBigIntegerModN = (hash, n) => {
+    const hashArray = Array.from(new Uint8Array(hash));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    const hashBN = new BN(hashHex, 16);
+    return hashBN.mod(n);
   };
+  
 
   return (
     <>
