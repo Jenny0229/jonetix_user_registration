@@ -89,33 +89,45 @@ app.post('/decryption', (req, res) => {
 
 
 
-const verifySignature = (publicKey, message, timestamp, signature) => {
-  // Combine the message and timestamp
-  const combined = new Uint8Array(message.length + timestamp.length);
-  combined.set(message);
-  combined.set(timestamp, message.length);
-
-  // Convert publicKey Uint8Array to Hex
-  const pubKeyHex = uint8ArrayToHex(publicKey);
-  const key = ec.keyFromPublic(pubKeyHex, 'hex');
-
-  // Hash the combined message and timestamp
-  const hash = crypto.createHash('sha256').update(combined).digest();
-  const hashBN = new BN(hash.toString('hex'), 16);
-  const N = new BN('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', 16); // Define N appropriately
-  const obfuscated = hashBN.mod(N);
-  const obfuscatedHex = obfuscated.toString('hex').padStart(64, '0');
-
-  // Convert signature Uint8Array to Hex
-  const signatureHex = uint8ArrayToHex(signature);
-  const r = signatureHex.slice(0, 64);
-  const s = signatureHex.slice(64, 128);
-
-  console.log( `working fine`);
-  // Verify the signature
-  return key.verify(obfuscatedHex, { r, s });
-}
-
+  const verifySignature = (publicKey, message, timestamp, signature) => {
+    try {
+      // Combine the message and timestamp
+      const combined = new Uint8Array(message.length + timestamp.length);
+      combined.set(message);
+      combined.set(timestamp, message.length);
+  
+      // Convert publicKey Uint8Array to Hex
+      const pubKeyHex = uint8ArrayToHex(publicKey);
+      const key = ec.keyFromPublic(pubKeyHex, 'hex');
+  
+      // Hash the combined message and timestamp
+      const hash = crypto.createHash('sha256').update(combined).digest();
+      const hashBN = new BN(hash.toString('hex'), 16);
+      const N = new BN('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', 16); // Define N appropriately
+      const obfuscated = hashBN.mod(N);
+      const obfuscatedHex = obfuscated.toString('hex').padStart(64, '0');
+  
+      // Convert signature Uint8Array to Hex
+      const signatureHex = uint8ArrayToHex(signature);
+      const r = signatureHex.slice(0, 64);
+      const s = signatureHex.slice(64, 128);
+  
+      // Debug output
+      console.log('Combined:', combined);
+      console.log('Hash:', hash);
+      console.log('Obfuscated Hex:', obfuscatedHex);
+      console.log('Signature Hex:', signatureHex);
+      console.log('r:', r);
+      console.log('s:', s);
+  
+      // Verify the signature
+      const isValid = key.verify(obfuscatedHex, { r, s });
+      return isValid;
+    } catch (error) {
+      console.error('Error verifying signature:', error);
+      return false;
+    }
+  };
   
   const calculateDerivedKey = () =>{
     const sharedSecret = nacl.box.before(clientPublicKeys[clientPublicKeys.length - 1], serverPrivKey);
