@@ -1,8 +1,9 @@
-const express=require('express');
+const express = require('express');
 const nacl = require('tweetnacl');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const BN = require('bn.js');
+const naclUtil = require('tweetnacl-util');
 
 // Create an instance of the express application
 const app=express();
@@ -35,10 +36,14 @@ const toBigIntegerModN = (hash, ECC_N) => {
 
 // Endpoint to exchange ECDH keys
 let clientPublicKeys = [];
+let serverPubKey = null;
+let serverPrivKey = null;
 app.post('/exchange', (req, res) => {
     // Generate the server's key pair
     const serverKeyPair = nacl.box.keyPair();
     console.log(`Generated server side ECDH key pair`);
+    const serverPubKey = serverKeyPair.publicKey;
+    const serverPrivKey = serverKeyPair.secretKey;
 
     // Store the client's public key
     const clientPublicKey = new Uint8Array(req.body.clientPublicKey);
@@ -46,44 +51,69 @@ app.post('/exchange', (req, res) => {
     console.log(`Received user's ECDH public key`, clientPublicKey);
 
     // Send the server's public key as the response
-    res.status(200).json({ serverPublicKey: Array.from(serverKeyPair.publicKey) });
+    res.status(200).json({ serverPublicKey: Array.from(serverPubKey) });
 });
 
-/*
-const verifySignature = (publicKey, message, timestamp, signature) => {
-    const messageUint8 = naclUtil.decodeUTF8(message);
-    const combined = new Uint8Array(messageUint8.length + timestamp.length);
-    combined.set(messageUint8);
-    combined.set(timestamp, messageUint8.length);
+  //Endpoint to verify signature and decryption
+app.post('/decryption', (req, res) => {
+    const { message, signature, userPublicKey, time} = req.body;
+    console.log( `Received Encrypted Message from User`, message);
+    //console.log(`Received publickey from User`, userPublicKey);
+    //console.log(time);
+    //console.log(signature);
   
-    const hash = crypto.createHash('sha256').update(combined).digest();
-    const hashBigInt = BigInt('0x' + hash.toString('hex'));
-    const obfuscated = bigInt.mod(hashBigInt, N);
-    const obfuscatedUint8 = Uint8Array.from(obfuscated.toString(16).padStart(64, '0').match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-  
-    const signatureUint8 = naclUtil.decodeBase64(signature);
-    return nacl.sign.detached.verify(obfuscatedUint8, signatureUint8, publicKey);
-  };
+    const publicKey = base64UrlSafeToUint8Array(userPublicKey);
+    const Time = base64UrlSafeToUint8Array(time);
+    const msg = base64UrlSafeToUint8Array(message);
+    const sig = base64UrlSafeToUint8Array(signature);
+    //const N = base64UrlSafeToUint8Array(num);
 
-  
-// Endpoint to verify signature and decryption
-app.post('/verify-and-decrypt', (req, res) => {
-    const { encryptMsg, sig, publicKey, time} = req.body;
-  
-    const isValid = verifySignature(new Uint8Array(publicKey), encryptMsg, new Uint8Array(time), sig);
+    const isValid = verifySignature(publicKey, msg, Time, sig);
   
     if (!isValid) {
       return res.status(400).json({ message: 'Signature is invalid' });
     }
-  
+    console.log(`Signature Verification Succeeded`);
+  /*
     // Decrypt the message if the signature is valid
     try {
+      const derivedKey = calculateDerivedKey();
       const decryptedMessage = decryptMessage(Buffer.from(derivedKey, 'base64'), encryptMsg);
       res.status(200).json({ message: decryptedMessage });
     } catch (error) {
       res.status(400).json({ message: 'Decryption failed', error: error.message });
-    }
+    }*/
   });
+
+
+
+const verifySignature = (publicKey, message, timestamp, signature) => {
+  const combined = new Uint8Array(message.length + timestamp.length);
+  combined.set(message);
+  combined.set(timestamp, message.length);
+
+  const hash = crypto.createHash('sha256').update(combined).digest();
+  const hashBN = new BN(hash.toString('hex'), 16);
+  const N = new BN('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', 16); // Define N appropriately
+  const obfuscated = hashBN.mod(N);
+  const obfuscatedUint8 = obfuscated.toArrayLike(Uint8Array, 'be', 32);
+
+  console.log(`public Key`, publicKey);
+
+  return nacl.sign.detached.verify(obfuscatedUint8, signature, publicKey);
+}
+
+  
+  const calculateDerivedKey = () =>{
+    const sharedSecret = nacl.box.before(clientPublicKeys[clientPublicKeys.length - 1], serverPrivKey);
+
+    const derivedKey = crypto.createHmac('sha256', sharedSecret)
+    .update('some salt') // Use a proper salt in a real application
+    .digest();
+
+    return derivedKey;
+  };
+  
 
   const decryptMessage = (key, encryptedMessage) => {
     const parts = encryptedMessage.split(':');
@@ -97,4 +127,19 @@ app.post('/verify-and-decrypt', (req, res) => {
     let decrypted = decipher.update(encryptedText, 'base64', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
-  };*/
+  };
+
+  const base64UrlSafeToUint8Array = (base64UrlSafe) => {
+    // Convert from base64 URL safe to base64
+    let base64 = base64UrlSafe.replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4) {
+      base64 += '=';
+    }
+    const binaryString = Buffer.from(base64, 'base64').toString('binary');
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  };

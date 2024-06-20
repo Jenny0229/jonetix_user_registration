@@ -23,12 +23,14 @@ function App() {
   const [sharedSecret, setSharedSecret] = useState(null);
   const [encryptMsg, setEncryptMsg] = useState(null);
   const [encryptkey, setEncryptKey] = useState(null); //AES
+  const [base64Msg, setBase64Msg] = useState(null);
   const [iv, setIV] = useState(null); 
   
 
   const [publicSigKey, setSigPublicKey] = useState(null); //signature
   const [privateSigKey, setSigPrivateKey] = useState(null);//signature
   const [sig, setSig] = useState(null);
+  const [bigNum, setBigNum] = useState(null);
 
   // generate client's keys when component unmounts
   useEffect(() => {
@@ -92,12 +94,13 @@ function App() {
         console.log(`The encrypted message is:`, encrypted);
         setEncryptMsg(encrypted);
         const base64String = arrayBufferToBase64(encrypted);
+        setBase64Msg(base64String);
         console.log('In Base64 the encrypted message is:', base64String);
       }).catch(error => {
         console.error('Encryption failed:', error);
       });
 
-  
+      
       // step 5: perform signing
       signMessage(privateSigKey).then((signature) => {
         setSig(signature);
@@ -106,26 +109,48 @@ function App() {
   }, [iv, encryptkey, sharedSecret]);
 
   useEffect(() => {
-    if (sig) {
-      console.log(`The generated signature is:` , sig);
+    const sendEncryptedMessage = async () => {
+      if (sig) {
+        console.log('The generated signature is:', sig);
 
-    // // step 6: sending message to server side and signature verification
-    // const requestBody2 = {
-    //   encryptMsg,
-    //   sig,
-    //   publicKey,
-    //   time
-    // };
+        
+      
+        //transform the publicKey to raw format and get base64 publicKey
+        const cryptoKey = await exportCryptoKey(publicSigKey);
+        const base64Key = arrayBufferToBase64(cryptoKey);
 
-    // try {
-    //   const response = await axios.post('http://localhost:5001/verify-signature', requestBody2);
-    //   setVerificationResponse(response.data.message);
-    // } catch (error) {
-    //   console.error('Error verifying signature:', error);
-    //   setVerificationResponse('Signature verification failed');
-    // }
-    }
-  }, [sig]);
+        console.log(cryptoKey);
+
+        //transform the signature to base64 string
+        const signature = arrayBufferToBase64(sig);
+
+        //transform time to base64 string
+        const t = arrayBufferToBase64(eightByteTs);
+
+        //transform big number to base64 string
+        //const num = arrayBufferToBase64(modHashArrayBuffer);
+
+        // Step 6: sending message to server side and signature verification
+        console.log(publicSigKey);
+        const requestBodyy = {
+          message: base64Msg,
+          signature: signature,
+          userPublicKey: base64Key,
+          time: t,
+        };
+
+        try {
+          console.log('Sending Encrypted Message to Server');
+          const response = await axios.post('http://localhost:5001/decryption', requestBodyy);
+          console.log('Server response:', response.data);
+        } catch (error) {
+          console.error('Error verifying signature:', error);
+        }
+      }
+    };
+
+    sendEncryptedMessage();
+  }, [sig, encryptMsg, publicSigKey, time]);
   
 
   // process all the timestamp stuff
@@ -207,25 +232,6 @@ function App() {
     return buf;
   };
 
-  // decryption
-  // const decrypt = async () => {
-  //   if(!runVerification()){
-  //     console.log('Verification Failed');
-  //     return;
-  //   }
-  //   console.log('Verification Succeeded');
-  //   const decrypted = await window.crypto.subtle.decrypt(
-  //     {
-  //       name: 'AES-GCM',
-  //       iv: iv,
-  //     },
-  //     encryptkey,
-  //     encryptMsg
-  //   );
-  //   return ab2str(decrypted);
-  // };
-
-
 // ECDSA with Secp256k1 curve
 const generateKeyPairECDSA = async () => {
     return window.crypto.subtle.generateKey(
@@ -262,6 +268,8 @@ const signMessage = async () => {
 
   // Convert BN to Uint8Array
   const modHashArrayBuffer = new Uint8Array(modHashBuffer.toArrayLike(Uint8Array));
+
+  setBigNum(modHashArrayBuffer);
 
   // Sign the modHashBuffer using ECDSA with the secp256k1 curve
   const signAlgorithm = {
@@ -360,13 +368,17 @@ const signMessage = async () => {
   // Convert ArrayBuffer to Base64 String
   const arrayBufferToBase64 = (buffer) => {
     let binary = '';
-    const bytes = new Uint8Array(buffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return window.btoa(binary);
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  let base64 = window.btoa(binary);
+  // Replace characters for URL safety
+  base64 = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return base64;
   };
+
   const toBigIntegerModN = (hash, n) => {
     const hashArray = Array.from(new Uint8Array(hash));
     const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
@@ -374,6 +386,10 @@ const signMessage = async () => {
     return hashBN.mod(n);
   };
   
+  const exportCryptoKey = async (key) => {
+    const exported = await window.crypto.subtle.exportKey('raw', key);
+    return exported;
+  };
 
   return (
     <>
