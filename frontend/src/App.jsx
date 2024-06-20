@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import './App.css'
 import { FormControl, Input, InputLabel, Button } from '@mui/material';
 import crypto from 'crypto';
 import nacl from 'tweetnacl';
 import axios from 'axios';
+//import naclUtil from 'tweetnacl-util';
 
 
 function App() {
@@ -15,30 +16,35 @@ function App() {
   // 32B SHA256 TS (useful with AES 256)
   const [encryptTs, setEncryptTs] = useState(null);
 
-  const [encryptMsg, setEncryptMsg] = useState(null);
-  const [encryptkey, setEncryptKey] = useState(null); //AES
-  const [iv, setIV] = useState(null); 
   const [ecdhPublicKey, setEcdhPublicKey] = useState(null);
   const [ecdhPrivateKey, setEcdhPrivateKey] = useState(null);
   const [otherPartyPublicKey, setOtherPartyPublicKey] = useState(null);
   const [sharedSecret, setSharedSecret] = useState(null);
+  const [encryptMsg, setEncryptMsg] = useState(null);
+  const [encryptkey, setEncryptKey] = useState(null); //AES
+  const [iv, setIV] = useState(null); 
+  
 
-  const [publicKey, setPublicKey] = useState(null); //signature
-  const [privateKey, setPrivateKey] = useState(null);//signature
-  const [curve, setCurve] = useState(null);
+  const [publicSigKey, setSigPublicKey] = useState(null); //signature
+  const [privateSigKey, setSigPrivateKey] = useState(null);//signature
   const [sig, setSig] = useState(null);
 
   // generate client's keys when component unmounts
   useEffect(() => {
-    // generate ECDH key pair
-    const { publicKey, privateKey } = nacl.box.keyPair();
-    setEcdhPublicKey(publicKey);
-    setEcdhPrivateKey(privateKey);
+    // generate ECDH key pair using Secp256k1
+    const keyPair = nacl.box.keyPair();nacl.box.keyPair();
+    console.log(`Generated personal ECDH public key:`, keyPair.publicKey);
+    console.log(`Generated personal ECDH private key:`, keyPair.secretKey);
+    setEcdhPrivateKey(keyPair.secretKey);
+    setEcdhPublicKey(keyPair.publicKey);
 
-    // Generate ECDSA key pair 
-    generateKeyPair(curve, 'ECDSA').then(keyPair => {
-      setPrivateKey(keyPair.privateKey);
-      setPublicKey(keyPair.publicKey);
+    //Generate ECDSA key pair(uses Curve 25519 by default)
+    generateKeyPairECDSA().then(keyPair => {
+      setSigPrivateKey(keyPair.privateKey);
+      console.log(`Generated personal ECDSA private key:`, keyPair.privateKey);
+      setSigPublicKey(keyPair.publicKey);
+      console.log(`Generated personal ECDSA public key:`, keyPair.publicKey);
+
     }).catch(error => {
       console.error('Error generating key pair:', error);
     });
@@ -48,43 +54,85 @@ function App() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    console.log(`received user message:`, message);
+
     // step 1: process timestamp
     handleTime();
 
-    // step 2: get the other party's public key backend api
-    const requestBody = {
-      clientPublicKey: Array.from(publicKey),
+    
+    // step 2: exchanging ECDH public key with server
+    const requestBody1 = {
+      clientPublicKey: Array.from(ecdhPublicKey),
     };
-    const response = await axios.get('http://localhost:5001/exchange', requestBody);
-    setOtherPartyPublicKey(new Uint8Array(response.data.serverPublicKey));
+    const response = await axios.post('http://localhost:5001/exchange', requestBody1);
+    const serverKey = new Uint8Array(response.data.serverPublicKey);
+    setOtherPartyPublicKey(serverKey);
+    console.log( `received server public key`, serverKey);
 
-    // step 3: perform ECDH key exchange
-    const sharedKey = performKeyExchange(privateKey, otherPublicKey);
-    setSharedSecret(sharedKey); 
+    
+    // step 3: calculating the shared secret using my private key and server's public key
+    const sharedSec = performKeyExchange();
+    console.log(`Generated shared secret from user's private key and server's public key:`, sharedSec);
+    setSharedSecret(sharedSec); 
 
-    // step 4: encrypting the message with sharedSecret key
-    const encrypted = handleEncrypt();
+    
+    // step 4: generating encryption key based on shared secret and encrypting the message
+    const encrypted = await handleEncrypt();
+    console.log( `The encrypted message is:`, encrypted);
     setEncryptMsg(encrypted);
-
+    const base64String = arrayBufferToBase64(encrypted);
+    console.log('In Base64 the encrypted message is:', base64String);
+    /*
     // step 5: perform signing 
     setSig(await signMessage(privateKey));
 
+    // step 6: sending message to server side and signature verification
+    const requestBody2 = {
+      encryptMsg,
+      sig,
+      publicKey,
+      time
+    };
+
+    try {
+      const response = await axios.post('http://localhost:5001/verify-signature', requestBody2);
+      setVerificationResponse(response.data.message);
+    } catch (error) {
+      console.error('Error verifying signature:', error);
+      setVerificationResponse('Signature verification failed');
+    }*/
+
   };
+
 
   // process all the timestamp stuff
   const handleTime = async () => {
-    setTime(await new Date().getTime());
-    setEightByteTs(await getTimeByteArray(time));
+    const currentTime = Date.now();
+    setTime(currentTime);
+    console.log(`The current timestamp is ${currentTime}`);
+    const byteTime = getTimeByteArray(currentTime);
+    setEightByteTs(byteTime);
+    console.log(`the 8B-TS array is ${byteTime}`);
     const prngArray = getRandomByteArray();
-    const concatenatedArray = concatArrays(eightByteTs, prngArray);
-    setEncryptTs(await getSHA256Hash(concatenatedArray));
+    console.log(`the 32 Byte Random array is ${prngArray}`);
+    const concatenatedArray = concatArrays(byteTime, prngArray);
+    console.log(`the concatenated 40B TS + PRNG arry is ${concatenatedArray}`);
+    getSHA256Hash(concatenatedArray).then(hashedArray => {
+      console.log(`hashed to 32B:`, hashedArray);
+      setEncryptTs(hashedArray);
+    });
+   
   }
-
 
   // encryption
   const handleEncrypt = async () => {
-    setEncryptKey(await generateKey());
-    setIV(generateIV(encryptTs));
+    console.log( `handling encryption`);
+    const Keyyy = await generateKey();
+    console.log( `Generated encryption key:`, Keyyy);
+    setEncryptKey(Keyyy);
+    const ivvv = generateIV(encryptTs);
+    console.log( `Generated Initialization Vector based on previous 32B Time + PRNG:`, ivvv);
+    setIV(ivvv);
     const encrypted = await encrypt();
     return encrypted;
   };
@@ -94,16 +142,25 @@ function App() {
     return num.slice(0, 16);
   };
 
-  // generate encryption key
+  // generating encryption key based on the shared secret from ECDH key exchange
   const generateKey = async () => {
-    return window.crypto.subtle.generateKey(
-      {
-        name: 'AES-GCM',
-        length: 256,
-      },
-      true, // extractable
-      ['encrypt', 'decrypt']
+    // Convert sharedSecret to a Uint8Array if it is not already
+    const encoder = new TextEncoder();
+    const data = encoder.encode(sharedSecret);
+
+    // Compute SHA-256 hash
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+
+    // Convert hashBuffer to CryptoKey object
+    const derivedKey = await window.crypto.subtle.importKey(
+      'raw',
+      hashBuffer,
+      { name: 'AES-GCM' },
+      false, // Whether the key is extractable
+      ['encrypt', 'decrypt'] // Key usage
     );
+
+    return derivedKey;
   };
 
   const encrypt = async () => {
@@ -148,28 +205,28 @@ function App() {
   };
 
 
-// can create ECDSA with Secp256k1 curve
-const generateKeyPair = async () => {
+// ECDSA with Secp256k1 curve
+const generateKeyPairECDSA = async () => {
     return window.crypto.subtle.generateKey(
       {
-        name: algorithm,
-        namedCurve: "K-256", // Secp256k1 curve
+        name: 'ECDSA',
+        namedCurve: 'P-256',
       },
       true,
       ["sign", "verify"]
     );
 };
 
-// Function to perform ECDH key exchange
-const performKeyExchange = (privateKey, otherPublicKey) => {
+//Calculating shared secret
+const performKeyExchange = () => {
   // Perform ECDH key exchange using tweetnacl
-  const sharedKey = nacl.box.before(otherPublicKey, privateKey);
+  const sharedKey = nacl.box.before(otherPartyPublicKey, ecdhPrivateKey);
   return sharedKey;
 };
 
 // sign the message: taking SHA256 of the message with the 8B TS, 
 // then converting that to a 32B-BigInteger modulo N (of the ECC256 curve parameter N).
-const signMessage = async (privateKey) => {
+const signMessage = async () => {
   const msgBuffer = new TextEncoder().encode(message);
   const tsBuffer = eightByteTs;
 
@@ -193,7 +250,7 @@ const signMessage = async (privateKey) => {
   return new Uint8Array(signature);
 };
   
-
+/*
   //transforming the format of public key (ECDSA)
   const importPublicKey = async () => {
     // Remove the PEM header/footer
@@ -246,7 +303,7 @@ const signMessage = async (privateKey) => {
     const isValid = await verifySignature(publicTransformed);
     return isValid;
   };
-
+*/
   // HELPER FUNCTIONS
   // converts the current UTC time to an 8-byte array
   const getTimeByteArray = (time) => {
@@ -258,33 +315,48 @@ const signMessage = async (privateKey) => {
 
   // generate a 32-byte random number (satisfy PRNG)
   const getRandomByteArray = () => {
-    return crypto.randomBytes(32); // Generate 32 random bytes
+    const array = new Uint8Array(32);
+    window.crypto.getRandomValues(array); // Generate 32 random bytes
+    return array;
   };
 
   // concatenate the 8-byte time array with the 32-byte random array
-  const concatArrays = (timeArray, prngArray) => {
-    const concatenatedArray = new Uint8Array(timeArray.length + prngArray.length);
-    concatenatedArray.set(timeArray, 0);
-    concatenatedArray.set(prngArray, timeArray.length);
+  const concatArrays = (byteArray, prngArray) => {
+    const concatenatedArray = new Uint8Array(byteArray.length + prngArray.length);
+    concatenatedArray.set(byteArray, 0);
+    concatenatedArray.set(prngArray, byteArray.length);
     return concatenatedArray;
   };
 
   // get the SHA-256 hash of the concatenated array in 32 Byte
-  const getSHA256Hash = (array) => {
-    return crypto.createHash('sha256').update(array).digest();
+  const getSHA256Hash = async (array) => {
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', array);
+    return new Uint8Array(hashBuffer);
   };
   
+  // Convert ArrayBuffer to Base64 String
+  const arrayBufferToBase64 = (buffer) => {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+  };
 
   return (
     <>
-      <FormControl defaultValue="" required onSubmit={handleSubmit}>
-        <InputLabel>Message</InputLabel>
-        <Input 
-          placeholder="Write your message here" 
-          onChange={(e) => setMessage(e.target.value)}
-        />
+      <form onSubmit={handleSubmit}>
+        <FormControl required>
+          <InputLabel>Message</InputLabel>
+          <Input 
+            placeholder="Write your message here" 
+            onChange={(e) => setMessage(e.target.value)}
+          />
+        </FormControl>
         <Button type="submit">Submit</Button>
-      </FormControl>
+      </form>
     </>
   )
 }
