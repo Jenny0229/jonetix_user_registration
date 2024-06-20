@@ -34,14 +34,14 @@ function App() {
 
   // generate client's keys when component unmounts
   useEffect(() => {
-    // generate ECDH key pair using Secp256k1
-    const keyPair = nacl.box.keyPair();nacl.box.keyPair();
+    // generate ECDH key pair using Curve 25519
+    const keyPair = nacl.box.keyPair();
     console.log(`Generated personal ECDH public key:`, keyPair.publicKey);
     console.log(`Generated personal ECDH private key:`, keyPair.secretKey);
     setEcdhPrivateKey(new Uint8Array(keyPair.secretKey));
     setEcdhPublicKey(new Uint8Array(keyPair.publicKey));
 
-    //Generate ECDSA key pair(uses Curve 25519 by default)
+    //Generate ECDSA key pair using secp256k1
     generateKeyPairECDSA().then(keyPair => {
       setSigPrivateKey(keyPair.privateKey);
       console.log(`Generated personal ECDSA private key:`, keyPair.privateKey);

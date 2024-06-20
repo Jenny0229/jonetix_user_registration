@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const BN = require('bn.js');
 const naclUtil = require('tweetnacl-util');
+const { ec: EC } = require('elliptic');
 
 // Create an instance of the express application
 const app=express();
@@ -14,6 +15,7 @@ app.use(bodyParser.json());
 // Specify a port number for the server
 const port=5001;
 
+const ec = new EC('secp256k1');
 
 // Start the server and listen to the port
 app.listen(port, () => {
@@ -88,19 +90,30 @@ app.post('/decryption', (req, res) => {
 
 
 const verifySignature = (publicKey, message, timestamp, signature) => {
+  // Combine the message and timestamp
   const combined = new Uint8Array(message.length + timestamp.length);
   combined.set(message);
   combined.set(timestamp, message.length);
 
+  // Convert publicKey Uint8Array to Hex
+  const pubKeyHex = uint8ArrayToHex(publicKey);
+  const key = ec.keyFromPublic(pubKeyHex, 'hex');
+
+  // Hash the combined message and timestamp
   const hash = crypto.createHash('sha256').update(combined).digest();
   const hashBN = new BN(hash.toString('hex'), 16);
   const N = new BN('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', 16); // Define N appropriately
   const obfuscated = hashBN.mod(N);
-  const obfuscatedUint8 = obfuscated.toArrayLike(Uint8Array, 'be', 32);
+  const obfuscatedHex = obfuscated.toString('hex').padStart(64, '0');
 
-  console.log(`public Key`, publicKey);
+  // Convert signature Uint8Array to Hex
+  const signatureHex = uint8ArrayToHex(signature);
+  const r = signatureHex.slice(0, 64);
+  const s = signatureHex.slice(64, 128);
 
-  return nacl.sign.detached.verify(obfuscatedUint8, signature, publicKey);
+  console.log( `working fine`);
+  // Verify the signature
+  return key.verify(obfuscatedHex, { r, s });
 }
 
   
@@ -142,4 +155,8 @@ const verifySignature = (publicKey, message, timestamp, signature) => {
       bytes[i] = binaryString.charCodeAt(i);
     }
     return bytes;
+  };
+
+  const uint8ArrayToHex = (uint8Array) => {
+    return Array.from(uint8Array).map(b => b.toString(16).padStart(2, '0')).join('');
   };
