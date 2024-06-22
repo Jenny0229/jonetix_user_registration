@@ -1,3 +1,4 @@
+/* App.css */
 #root {
   max-width: 1280px;
   margin: 0 auto;
@@ -39,4 +40,26 @@
 
 .read-the-docs {
   color: #888;
+}
+
+/* Add these styles for the form */
+.title {
+  margin-bottom: 2rem;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 2rem;
+}
+
+.formControl {
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 2rem !important;
+}
+
+.button {
+  margin-top: 2rem;
 }
