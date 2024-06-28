@@ -12,6 +12,8 @@ function App() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
 
+
+
   const generateKeyPairECDSA = async () => {
     return window.crypto.subtle.generateKey(
       {
