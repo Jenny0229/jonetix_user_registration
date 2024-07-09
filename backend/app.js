@@ -1,130 +1,162 @@
 const express = require('express');
-const nacl = require('tweetnacl');
-const bodyParser = require('body-parser');
-const crypto = require('crypto');
-const BN = require('bn.js');
-const naclUtil = require('tweetnacl-util');
-const { ec: EC } = require('elliptic');
-const redis = require('redis');
 const db = require("./firebase");
+const {generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse, generateAuthenticationOptions} = require('@simplewebauthn/server');
 const { addDoc, collection } = require("firebase/firestore");
 
-// Create an instance of the express application
 const app=express();
 const cors = require("cors");
 app.use(cors());
-app.use(bodyParser.json());
 
-// instance for memorystore
-const client = redis.createClient({
-  host: '10.46.99.131',
-  port: 6378
-});
-
-// Specify a port number for the server
 const port=5001;
 
-const ec = new EC('secp256k1');
-
-// Start the server and listen to the port
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
-
-// Define a simple route to handle GET requests at the root URL
-app.get('/', (req, res) => {
-  res.send('Welcome to the ECDH key exchange server!');
-});
-
-// use middleware to parse json request bodies
 app.use(express.json());
 
+// Defining some constants that describe your "Relying Party" (RP) server to authenticators:
+/**
+ * Human-readable title for your website
+ */
+const rpName = 'Jonetix SimpleWebAuthn Example';
+/**
+ * A unique identifier for your website. 'localhost' is okay for
+ * local dev
+ */
+const rpID = 'localhost';
+/**
+ * The URL at which registrations and authentications should occur.
+ * 'http://localhost' and 'http://localhost:PORT' are also valid.
+ * Do NOT include any trailing /
+ */
+const origin = `https://${rpID}:5001`;
 
-// Endpoint to exchange ECDH keys
-let clientPublicKeys = null;
-let serverPubKey = null;
-let serverPrivKey = null;
-app.post('/sendKey', async (req, res) => {
-  console.log(req.body);
+
+// ROUTES
+app.get('/', (req, res) => {
+  res.send('Welcome to the backend server!');
+});
+
+// Endpoint for generateRegistrationOptions
+app.get('/generate-registration-options', async (req, res) => {
+  // Retrieve the user
+  const user = req.body;
+
+  const options = await generateRegistrationOptions({
+    rpName,
+    rpID,
+    userName: user.username,
+    // Don't prompt users for additional information about the authenticator
+    // (Recommended for smoother UX)
+    attestationType: 'none',
+    // See "Guiding use of authenticators via authenticatorSelection" below
+    authenticatorSelection: {
+      // Defaults
+      residentKey: 'preferred',
+      userVerification: 'preferred',
+      // Optional
+      authenticatorAttachment: 'platform',
+    },
+  });
+  return options;
+});
+
+// Endpoint for verifyRegistrationResponse
+app.post('/verify-registration', async (req, res) => {
+  const body = req.body.body;
+
+  // Retrieve the logged-in user
+  const user = req.body.user;
+  // (Pseudocode) Get `options.challenge` that was saved above
+  const currentOptions = getCurrentRegistrationOptions(user);
   
-  // step0: Generate server's ECDH key pair
-  const serverECDH = crypto.createECDH('secp256k1');
-  serverECDH.generateKeys();
-  const serverPublicKeyBase64 = serverECDH.getPublicKey().toString('base64');
-  const serverPrivateKeyBase64 = serverECDH.getPrivateKey().toString('base64');
-  console.log("testing server ecdh in base 64")
-  console.log(serverPublicKeyBase64);
-  console.log(serverPrivateKeyBase64);
-  serverPubKey = serverPublicKeyBase64;
-  serverPrivKey = serverPrivateKeyBase64;
 
-  //step1: convert the keys' JWK format into a format suitable for database storage
-  const clientECDH = req.body.ecdhPublicKey;
-  const clientECDHBase64 = convertKeyToBase64(clientECDH);
-  console.log("testing client ecdh in base 64");
-  console.log(clientECDHBase64);
-  clientPublicKeys = clientECDHBase64;
+  let verification;
+  try {
+    verification = await verifyRegistrationResponse({
+      response: body,
+      expectedChallenge: currentOptions.challenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).send({ error: error.message });
+  }
 
-  //step2: storing data into database
-  const username = req.body.username;
-  const email = req.body.email;
-  console.log("testing client data");
-  console.log(username);
-  console.log(email);
+  const { verified } = verification;
+  return { verified };
 
-  // store username and email
+});
+
+
+
+// Endpoint to send user data
+app.post('/send-data', async (req, res) => {
+  console.log(req.body);
+
+  const { registrationInfo } = req.body.body; // = verification
+  const {
+    credentialID,
+    credentialPublicKey,
+    counter,
+    credentialDeviceType,
+    credentialBackedUp,
+  } = registrationInfo;
+  const user = req.body.user;
+
+  const newPasskey = {
+    // `user` here is from Step 2
+    user,
+    // Created by `generateRegistrationOptions()` in Step 1
+    webAuthnUserID: currentOptions.user.id,
+    // A unique identifier for the credential
+    id: credentialID,
+    // The public key bytes, used for subsequent authentication signature verification
+    publicKey: credentialPublicKey,
+    // The number of times the authenticator has been used on this site so far
+    counter,
+    // Whether the passkey is single-device or multi-device
+    deviceType: credentialDeviceType,
+    // Whether the passkey has been backed up in some way
+    backedUp: credentialBackedUp,
+    // `body` here is from Step 2
+    transports: body.response.transports,
+  };
+  // save registrationInfo to database
   try {
     const docRef = await addDoc(collection(db, 'users'), {
       username: username,
-      email: email,
-      ecdh_client: serverPubKey,
-      ecdh_server: clientPublicKeys
+      registrationInfo: registrationInfo,
     });
   } catch (error) {
     console.error(error);
   }
+  // TODO:
+  // (Pseudocode) Save the authenticator info so that we can
+  // get it by user ID later
+  saveNewPasskeyInDB(newPasskey);
 
-
-  // Example key format: user:email
-  // const key = `user:${email}`;
-
-  // client.hmset(key, {
-  //   username: username,
-  //   email: email
-  // }, (err, reply) => {
-  //   if (err) {
-  //     console.error('Error storing data:', err);
-  //     res.status(500).send('Error storing data');
-  //   } else {
-  //     console.log('Data stored successfully:', reply);
-  //     res.send('Data stored successfully');
-  //   }
-  // });
-
-  // Send the server's public key as the response
-  res.json({
-    serverPublicKey: serverPublicKeyBase64,
-    //sharedSecret: sharedSecret // For testing only, do not send shared secrets in production
-  });
-  //return res.status(200).json({ serverPublicKey: Array.from(serverPubKey) });
   
-  /*
-    // Store the client's public key
-    const clientPublicKey = new Uint8Array(req.body.clientPublicKey);
-    clientPublicKeys.push(clientPublicKey);
-    console.log(`Received user's ECDH public key`, clientPublicKey);
-*/
+  
+  // //storing data into database
+  // const username = req.body.username;
+  // const email = req.body.email;
+  // console.log("testing client data");
+  // console.log(username);
+  // console.log(email);
+
+  // // store username and email
+  // try {
+  //   const docRef = await addDoc(collection(db, 'users'), {
+  //     username: username,
+  //     email: email
+  //   });
+  // } catch (error) {
+  //   console.error(error);
+  // }
+
+  // return res.status(200).json();
 
 });
 
-
-const base64Encode = (str) => {
-  return Buffer.from(str, 'utf8').toString('base64');
-};
-
-const convertKeyToBase64 = (key) => {
-  // Concatenate x and y values
-  const keyMaterial = `${key.x}.${key.y}`;
-  // Convert to Base64
-  return base64Encode(keyMaterial);
-};

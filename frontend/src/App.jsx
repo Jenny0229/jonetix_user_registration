@@ -2,103 +2,93 @@ import { useState, useEffect } from 'react';
 import './App.css';
 import { FormControl, InputLabel, Input, Button, Typography } from '@mui/material';
 import axios from 'axios';
-import nacl from 'tweetnacl';
+
+import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
+
+
 
 function App() {
-  const [ecdhPublicKey, setEcdhPublicKey] = useState(null);
-  const [ecdhPrivateKey, setEcdhPrivateKey] = useState(null);
-  const [ecdsaPublicKey, setEcdsaPublicKey] = useState(null);
-  const [ecdsaPrivateKey, setEcdsaPrivateKey] = useState(null);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [currentRegistrationOptions, setCurrentRegistrationOptions] = useState(null);
+  const [registrationSuccess, setRegistrationSuccess] =  useState(false);
 
-
-
-  const generateKeyPairECDSA = async () => {
-    return window.crypto.subtle.generateKey(
-      {
-        name: 'ECDSA',
-        namedCurve: 'P-256',
-      },
-      true,
-      ["sign", "verify"]
-    );
-  };
-
-  const generateKeyPairECDH = async () => {
-    return window.crypto.subtle.generateKey(
-      {
-        name: "ECDH",
-        namedCurve: "P-256" // Use the named curve 'P-256'
-      },
-      true, // Extractable
-      ["deriveKey", "deriveBits"] // Key usages
-    );
-  }
-
-  const exportKey = async (publicKey) => {
-    try {
-      const publicKeyJwk = await window.crypto.subtle.exportKey(
-        "jwk",
-        publicKey
-      );
-      console.log('Exported public key:', publicKeyJwk);
-      return publicKeyJwk;
-    } catch (error) {
-      console.error('Error exporting public key:', error);
-      throw error;
-    }
-  }
-
-  const generateAndExportKeys = async () => {
-    try {
-      // Generate ECDH key pair
-      const ecdhKeyPair = await generateKeyPairECDH();
-      setEcdhPrivateKey(ecdhKeyPair.privateKey);
-      setEcdhPublicKey(ecdhKeyPair.publicKey);
-      console.log('Generated ECDH key pair:', ecdhKeyPair);
-
-      // Generate ECDSA key pair
-      const ecdsaKeyPair = await generateKeyPairECDSA();
-      setEcdsaPrivateKey(ecdsaKeyPair.privateKey);
-      setEcdsaPublicKey(ecdsaKeyPair.publicKey);
-      console.log('Generated ECDSA key pair:', ecdsaKeyPair);
-
-      // Export the public keys
-      const exportedEcdhPublicKey = await exportKey(ecdhKeyPair.publicKey);
-      const exportedEcdsaPublicKey = await exportKey(ecdsaKeyPair.publicKey);
-
-      return {
-        ecdhPublicKey: exportedEcdhPublicKey,
-        ecdsaPublicKey: exportedEcdsaPublicKey
-      };
-    } catch (error) {
-      console.error('Error generating and exporting keys:', error);
-      throw error;
-    }
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     console.log('Submitting:', { username, email });
+    
 
-    try {
-      //step1: generating two key pairs
-      const keys = await generateAndExportKeys();
-
-      //step2: sending two public keys to server together with username and email
-      const data = {
-        username,
-        email,
-        ecdhPublicKey: keys.ecdhPublicKey,
-        ecdsaPublicKey: keys.ecdsaPublicKey
-      };
-
-      await axios.post('http://localhost:5001/sendKey', data);
-      console.log('Public keys sent to server successfully');
-    } catch (error) {
-      console.error('Error sending public keys to server:', error);
+    // GET registration options from the endpoint that calls
+    // @simplewebauthn/server -> generateRegistrationOptions()
+    const userObj = {
+      id: string, // Unique identifier  TODO: use random number generator for ID
+      username: username,
+      email: email,
     }
+    const resp = await axios.get('http://localhost:5001/generate-registration-options', userObj);
+    // TODO： i think this should be on server ? Remember these options for the user
+    setCurrentRegistrationOptions(userObj, resp);
+
+    let attResp;
+    try {
+      // Pass the options to the authenticator and wait for a response
+      attResp = await startRegistration(await resp.json());
+    } catch (error) {
+      // Some basic error handling
+      if (error.name === 'InvalidStateError') {
+        elemError.innerText = 'Error: Authenticator was probably already registered by user';
+      } else {
+        elemError.innerText = error;
+      }
+
+      throw error;
+    }
+
+
+    // POST the response to the endpoint that calls
+    // @simplewebauthn/server -> verifyRegistrationResponse()
+    try {
+      const requestBody = {
+        user: userObj,
+        body: JSON.stringify(attResp)
+      };
+    
+      const verificationResp = await axios.post('http://localhost:5001/verify-registration', requestBody);
+    
+      // Handle verification response as needed
+      console.log('Verification response:', verificationResp.data);
+    } catch (error) {
+      // Handle errors, e.g., network errors or server errors
+      console.error('Verification failed:', error);
+    }
+
+    // Wait for the results of verification
+    const verificationJSON = await verificationResp.json();
+    // Update in database for the logged in user
+    if (verificationJSON && verificationJSON.verified) {
+      setRegistrationSuccess(true);
+      const requestBody = {
+        user: userObj,
+        body: verificationResp
+      };
+      await axios.post('http://localhost:5001/send-data', requestBody);
+    }
+
+
+
+    // insert into database
+    // try {
+    //   const data = {
+    //     username,
+    //     email,
+    //   };
+
+    //   await axios.post('http://localhost:5001/send-data', data);
+    //   console.log('Data sent to server successfully');
+    // } catch (error) {
+    //   console.error('Error sending data to server:', error);
+    // }
   };
 
   return (
@@ -122,10 +112,24 @@ function App() {
             onChange={(e) => setEmail(e.target.value)}
           />
         </FormControl>
-        <Button type="submit" variant="contained" color="primary" className="button">
+        <Button type="submit" variant="contained" color="secondary" className="button">
           Submit
         </Button>
       </form>
+
+      <div>
+      {registrationSuccess ? (
+        <div>
+          <h2>Success!</h2>
+          <p>Verification successful!</p>
+        </div>
+      ) : (
+        <div>
+          <h2>Oh no, something went wrong!</h2>
+        </div>
+      )}
+      </div>
+
     </>
   );
 }
