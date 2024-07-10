@@ -10,7 +10,6 @@ import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 function App() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
-  const [currentRegistrationOptions, setCurrentRegistrationOptions] = useState(null);
   const [registrationSuccess, setRegistrationSuccess] =  useState(false);
 
 
