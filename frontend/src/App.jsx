@@ -21,14 +21,13 @@ function App() {
 
     // GET registration options from the endpoint that calls
     // @simplewebauthn/server -> generateRegistrationOptions()
-    const userObj = {
-      id: string, // Unique identifier  TODO: use random number generator for ID
+    const userObj = { // equivalent to UserModel for Typescript
+      id: generateUniqueId(), // Unique identifier 
       username: username,
       email: email,
     }
+    // pass in userObj since we are registering a new user
     const resp = await axios.get('http://localhost:5001/generate-registration-options', userObj);
-    // TODO： i think this should be on server ? Remember these options for the user
-    setCurrentRegistrationOptions(userObj, resp);
 
     let attResp;
     try {
@@ -90,6 +89,12 @@ function App() {
     //   console.error('Error sending data to server:', error);
     // }
   };
+
+  // generate random unique id for userObj (UserModel for Typescript)
+  function generateUniqueId() {
+    return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 15);
+  }
+  
 
   return (
     <>
