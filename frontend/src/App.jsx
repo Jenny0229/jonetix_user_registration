@@ -73,21 +73,6 @@ function App() {
       };
       await axios.post('http://localhost:5001/send-data', requestBody);
     }
-
-
-
-    // insert into database
-    // try {
-    //   const data = {
-    //     username,
-    //     email,
-    //   };
-
-    //   await axios.post('http://localhost:5001/send-data', data);
-    //   console.log('Data sent to server successfully');
-    // } catch (error) {
-    //   console.error('Error sending data to server:', error);
-    // }
   };
 
   // generate random unique id for userObj (UserModel for Typescript)
