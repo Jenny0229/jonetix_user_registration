@@ -11,7 +11,7 @@ function App() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [registrationSuccess, setRegistrationSuccess] =  useState(false);
-
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -25,34 +25,32 @@ function App() {
       username: username,
       email: email,
     }
+    console.log(userObj);
     // pass in userObj since we are registering a new user
-    const resp = await axios.get('http://localhost:5001/generate-registration-options', userObj);
+    const resp = await axios.post('http://localhost:5001/generate-registration-options', userObj);
+
+    console.log('received registration options from server', resp.data);
 
     let attResp;
     try {
       // Pass the options to the authenticator and wait for a response
-      attResp = await startRegistration(await resp.json());
+      attResp = await startRegistration(resp.data);
     } catch (error) {
       // Some basic error handling
       if (error.name === 'InvalidStateError') {
-        elemError.innerText = 'Error: Authenticator was probably already registered by user';
+        setError('Error: Authenticator was probably already registered by user');
       } else {
-        elemError.innerText = error;
+        setError(error.message);
       }
 
       throw error;
     }
 
-
+    let verificationResp;
     // POST the response to the endpoint that calls
     // @simplewebauthn/server -> verifyRegistrationResponse()
     try {
-      const requestBody = {
-        user: userObj,
-        body: JSON.stringify(attResp)
-      };
-    
-      const verificationResp = await axios.post('http://localhost:5001/verify-registration', requestBody);
+      verificationResp = await axios.post('http://localhost:5001/verify-registration', attResp);
     
       // Handle verification response as needed
       console.log('Verification response:', verificationResp.data);
@@ -61,16 +59,10 @@ function App() {
       console.error('Verification failed:', error);
     }
 
-    // Wait for the results of verification
-    const verificationJSON = await verificationResp.json();
     // Update in database for the logged in user
-    if (verificationJSON && verificationJSON.verified) {
+    if (verificationResp.data && verificationResp.data.verified) {
+      console.log('registration success');
       setRegistrationSuccess(true);
-      const requestBody = {
-        user: userObj,
-        body: verificationResp
-      };
-      await axios.post('http://localhost:5001/send-data', requestBody);
     }
   };
 
