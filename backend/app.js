@@ -9,9 +9,6 @@ app.use(cors());
 
 const port=5001;
 
-//TO FIX: http vs https; why send data; 
-
-
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
@@ -34,23 +31,12 @@ const rpID = 'localhost';
  */
 const origin = `http://${rpID}:5173`;
 
+// Globals
 let userPasskeys = [];
-
 let currentOptions;
-let user;
+let client;
 
-class Passkey {
-  constructor(id, publicKey, user, webauthnUserID, counter, deviceType, backedUp, transports) {
-    this.id = id; // Base64URLString
-    this.publicKey = publicKey; // Uint8Array
-    this.user = user; // UserModel
-    this.webauthnUserID = webauthnUserID; // Base64URLString
-    this.counter = counter; // number
-    this.deviceType = deviceType; // CredentialDeviceType (string)
-    this.backedUp = backedUp; // boolean
-    this.transports = transports; // AuthenticatorTransportFuture[] (optional)
-  }
-}
+// NOTE: firebase does not store Uint8 Arrays so convert to Base 64. But don't forget to convert back when fetch from DB
 
 // ROUTES
 app.get('/', (req, res) => {
@@ -62,15 +48,14 @@ app.get('/', (req, res) => {
 app.post('/generate-registration-options', async (req, res) => {
   // Retrieve the user
   console.log('received', req.body);
-  user = req.body;
-  //console.log(user.username);
+  client = req.body;
 
   try {
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userName: user.username,
-      attestationType: 'none',
+      userName: client.username,
+      attestatiƒonType: 'none',
       excludeCredentials: userPasskeys.map(passkey => ({
         id: passkey.id,
         // Optional
@@ -78,13 +63,15 @@ app.post('/generate-registration-options', async (req, res) => {
       })),
       authenticatorSelection: {
         residentKey: 'preferred',
-        userVerification: 'preferred',
+        userVerification: 'required',
         authenticatorAttachment: 'platform',
       },
     });
 
     // Remember these options for the user DB
     currentOptions = options;
+    console.log("debugging options");
+    console.log(currentOptions);
 
     // Send the options as a JSON response
     res.json(options);
@@ -114,7 +101,11 @@ app.post('/verify-registration', async (req, res) => {
 
     // If verification is successful, proceed to save data to the database
     if (verified) {
-      const registrationInfo = req.body; // Assuming registrationInfo structure matches the expected format
+      const registrationInfo = {
+        ...verification.registrationInfo,
+        transports: req.body.response.transports,
+      };
+
       const {
         credentialID,
         credentialPublicKey,
@@ -124,23 +115,51 @@ app.post('/verify-registration', async (req, res) => {
         transports,
       } = registrationInfo;
 
-      const user = currentOptions.user; // Assuming user information is part of the currentOptions object
+      console.log("debugging regisInfo");
+      console.log(registrationInfo);
+
+      // Assuming user information is part of the currentOptions object
+      const user = {
+        ...currentOptions.user,
+        email: client.email, // Ensure email is included
+      };
+      // Convert data from Uint8Array to Base64
+      const base64CredentialPublicKey = Buffer.from(registrationInfo.credentialPublicKey).toString('base64');
+      const base64AttestationObject = Buffer.from(registrationInfo.attestationObject).toString('base64');
 
       // Construct the new Passkey object
       const newPasskey = {
-        userId: user.id,
-        credentialID,
-        credentialPublicKey,
-        counter,
-        credentialDeviceType,
-        credentialBackedUp,
-        transports,
+        user: user,
+        webAuthnUserID: user.id,
+        id: credentialID,
+        publicKey: base64CredentialPublicKey,
+        counter: counter,
+        deviceType: credentialDeviceType,
+        backedUp: credentialBackedUp,
+        transports: transports,
       };
+      console.log("debugging passkeys");
+      console.log(newPasskey);
 
       // Save registration information to the database
+      
       try {
         const docRef = await addDoc(collection(db, 'users'), {
-          registrationInfo: registrationInfo,
+          registrationInfo: {
+            fmt: registrationInfo.fmt,
+            counter: registrationInfo.counter,
+            aaguid: registrationInfo.aaguid,
+            credentialID: registrationInfo.credentialID,
+            credentialPublicKey: base64CredentialPublicKey, // changed to base64 for storage
+            credentialType: registrationInfo.credentialType,
+            attestationObject: base64AttestationObject,
+            userVerified: registrationInfo.userVerified,
+            credentialDeviceType: registrationInfo.credentialDeviceType,
+            credentialBackedUp: registrationInfo.credentialBackedUp,
+            origin: registrationInfo.origin,
+            rpID: registrationInfo.rpID,
+            //authenticatorExtensionResults: registrationInfo.authenticatorExtensionResults,
+          },
           user: user,
         });
         console.log('User registration info saved:', docRef.id);

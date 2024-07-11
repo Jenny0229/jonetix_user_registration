@@ -21,7 +21,7 @@ function App() {
     // GET registration options from the endpoint that calls
     // @simplewebauthn/server -> generateRegistrationOptions()
     const userObj = { // equivalent to UserModel for Typescript
-      id: generateUniqueId(), // Unique identifier 
+      //id: generateUniqueId(), // Unique identifier 
       username: username,
       email: email,
     }
@@ -67,9 +67,9 @@ function App() {
   };
 
   // generate random unique id for userObj (UserModel for Typescript)
-  function generateUniqueId() {
-    return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 15);
-  }
+  // function generateUniqueId() {
+  //   return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 15);
+  // }
   
 
   return (
