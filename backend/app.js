@@ -9,6 +9,9 @@ app.use(cors());
 
 const port=5001;
 
+//TO FIX: http vs https; why send data; 
+
+
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
@@ -29,11 +32,12 @@ const rpID = 'localhost';
  * 'http://localhost' and 'http://localhost:PORT' are also valid.
  * Do NOT include any trailing /
  */
-const origin = `https://${rpID}:5001`;
+const origin = `http://${rpID}:5173`;
 
-const currentRegistrationOptions = new Map();
+let userPasskeys = [];
+
 let currentOptions;
-let body;
+let user;
 
 class Passkey {
   constructor(id, publicKey, user, webauthnUserID, counter, deviceType, backedUp, transports) {
@@ -55,116 +59,112 @@ app.get('/', (req, res) => {
 
 
 // Endpoint for generateRegistrationOptions
-app.get('/generate-registration-options', async (req, res) => {
+app.post('/generate-registration-options', async (req, res) => {
   // Retrieve the user
-  const user = req.body;
+  console.log('received', req.body);
+  user = req.body;
+  //console.log(user.username);
 
-  const options = await generateRegistrationOptions({
-    rpName,
-    rpID,
-    userName: user.username,
-    // Don't prompt users for additional information about the authenticator
-    // (Recommended for smoother UX)
-    attestationType: 'none',
-    // See "Guiding use of authenticators via authenticatorSelection" below
-    authenticatorSelection: {
-      // Defaults
-      residentKey: 'preferred',
-      userVerification: 'preferred',
-      // Optional
-      authenticatorAttachment: 'platform',
-    },
-  });
+  try {
+    const options = await generateRegistrationOptions({
+      rpName,
+      rpID,
+      userName: user.username,
+      attestationType: 'none',
+      excludeCredentials: userPasskeys.map(passkey => ({
+        id: passkey.id,
+        // Optional
+        transports: passkey.transports,
+      })),
+      authenticatorSelection: {
+        residentKey: 'preferred',
+        userVerification: 'preferred',
+        authenticatorAttachment: 'platform',
+      },
+    });
 
-  // Remember these options for the user
-  currentRegistrationOptions.set(user, options);
+    // Remember these options for the user DB
+    currentOptions = options;
 
-  return options;
+    // Send the options as a JSON response
+    res.json(options);
+  } catch (error) {
+    // If there's an error, send a 500 server error status code and the error message
+    res.status(500).send({ error: error.message });
+  }
 });
 
 
 // Endpoint for verifyRegistrationResponse
+// Endpoint for verifyRegistrationResponse and to save registration data if verification is successful
 app.post('/verify-registration', async (req, res) => {
-  body = req.body.body;
+  console.log('Received verification request:', req.body);
 
-  // Retrieve the logged-in user
-  const user = req.body.user;
-  // Get `options.challenge` that was saved above
-  currentOptions = currentRegistrationOptions.get(user);
-  
-  let verification;
   try {
-    verification = await verifyRegistrationResponse({
-      response: body,
+    // Attempt to verify the registration response
+    const verification = await verifyRegistrationResponse({
+      response: req.body,
       expectedChallenge: currentOptions.challenge,
       expectedOrigin: origin,
       expectedRPID: rpID,
     });
+
+    const { verified } = verification;
+    console.log('Verification result:', verification);
+
+    // If verification is successful, proceed to save data to the database
+    if (verified) {
+      const registrationInfo = req.body; // Assuming registrationInfo structure matches the expected format
+      const {
+        credentialID,
+        credentialPublicKey,
+        counter,
+        credentialDeviceType,
+        credentialBackedUp,
+        transports,
+      } = registrationInfo;
+
+      const user = currentOptions.user; // Assuming user information is part of the currentOptions object
+
+      // Construct the new Passkey object
+      const newPasskey = {
+        userId: user.id,
+        credentialID,
+        credentialPublicKey,
+        counter,
+        credentialDeviceType,
+        credentialBackedUp,
+        transports,
+      };
+
+      // Save registration information to the database
+      try {
+        const docRef = await addDoc(collection(db, 'users'), {
+          registrationInfo: registrationInfo,
+          user: user,
+        });
+        console.log('User registration info saved:', docRef.id);
+      } catch (error) {
+        console.error('Error saving user registration info:', error);
+      }
+
+      // Save the Passkey object to the database
+      try {
+        const passkeyRef = await addDoc(collection(db, 'passkeys'), newPasskey);
+        console.log('Passkey saved:', passkeyRef.id);
+      } catch (error) {
+        console.error('Error saving passkey:', error);
+      }
+
+      // Respond to the client that the verification and data saving were successful
+      return res.status(200).json({ verified: true });
+    } else {
+      // If verification is not successful, respond accordingly
+      console.log('Verification failed');
+      return res.status(200).json({ verified: false });
+    }
   } catch (error) {
-    console.error(error);
+    console.error('Verification failed with error:', error);
     return res.status(400).send({ error: error.message });
   }
-
-  const { verified } = verification;
-  return { verified };
-
 });
-
-
-
-// Endpoint to send user data
-app.post('/send-data', async (req, res) => {
-  console.log(req.body);
-
-  const { registrationInfo } = req.body.body; // = verification
-  const {
-    credentialID,
-    credentialPublicKey,
-    counter,
-    credentialDeviceType,
-    credentialBackedUp,
-  } = registrationInfo;
-
-  const user = req.body.user;
-
-  const newPasskey = new Passkey(
-    // `user` here is from Step 2
-    user,
-    // Created by `generateRegistrationOptions()` in Step 1
-    currentOptions.user.id,
-    // A unique identifier for the credential
-    credentialID,
-    // The public key bytes, used for subsequent authentication signature verification
-    credentialPublicKey,
-    // The number of times the authenticator has been used on this site so far
-    counter,
-    // Whether the passkey is single-device or multi-device
-    credentialDeviceType,
-    // Whether the passkey has been backed up in some way
-    credentialBackedUp,
-    // `body` here is from Step 2
-    body.response.transports,
-  );
-
-  // save registrationInfo to database
-  try {
-    const docRef = await addDoc(collection(db, 'users'), {
-      registrationInfo: registrationInfo,
-      user: user,
-    });
-  } catch (error) {
-    console.error(error);
-  }
-
-  // save passkey to database (users' primary key links to passkey table)
-  // Save the authenticator info so that we can get it by user ID later
-  try {
-    const docRef = await addDoc(collection(db, 'passkeys'), newPasskey);
-  } catch (error) {
-    console.error(error);
-  }
-
-  return res.status(200).json();
-
-});
-
