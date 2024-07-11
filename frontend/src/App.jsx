@@ -10,11 +10,20 @@ import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 function App() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
-  const [registrationSuccess, setRegistrationSuccess] =  useState(false);
+  const [registrationSuccess, setRegistrationSuccess] =  useState(null);
   const [error, setError] = useState('');
+  const [flag, setFlag] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      // Clean up state when component unmounts
+      setFlag(false);
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
     console.log('Submitting:', { username, email });
     
 
@@ -55,25 +64,22 @@ function App() {
       // Handle verification response as needed
       console.log('Verification response:', verificationResp.data);
     } catch (error) {
+      setFlag(true);
       // Handle errors, e.g., network errors or server errors
       console.error('Verification failed:', error);
     }
 
     // Update in database for the logged in user
     if (verificationResp.data && verificationResp.data.verified) {
+      setFlag(true);
       console.log('registration success');
       setRegistrationSuccess(true);
     }
   };
 
-  // generate random unique id for userObj (UserModel for Typescript)
-  // function generateUniqueId() {
-  //   return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 15);
-  // }
-  
-
   return (
     <>
+    
       <Typography variant="h4" component="h1" gutterBottom className="title">
         New User Registration
       </Typography>
@@ -99,14 +105,18 @@ function App() {
       </form>
 
       <div>
-      {registrationSuccess ? (
+      {flag && (
         <div>
-          <h2>Success!</h2>
-          <p>Verification successful!</p>
-        </div>
-      ) : (
-        <div>
-          <h2>Oh no, something went wrong!</h2>
+          {registrationSuccess ? (
+            <div>
+              <h2>Success!</h2>
+              <p>Verification successful!</p>
+            </div>
+          ) : (
+            <div>
+              <h2>Oh no, something went wrong!</h2>
+            </div>
+          )}
         </div>
       )}
       </div>
