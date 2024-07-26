@@ -4,47 +4,16 @@ A login and user registration platform that uses SimpleWebAuthn.
 
 ## Table of Contents
 
-- [Installation](#installation)
 - [Usage](#usage)
 - [License](#license)
 - [Contact](#contact)
 
-## Installation
+## Usage
 
 ### Clone the Repository
    ```sh
-   git clone https://github.com/asatpathy314/spotify-app.git
+   git clone https://github.com/Jenny0229/jonetix_user_registration.git
    ```
-
-### Front-End Installation
-
-1. **Go to Front-End Folder**
-   ```sh
-   cd spotify-app/frontend
-
-2. **Install Dependencies**
-   ```sh
-   npm install
-
-### Back-End Installation
-
-1. **Go to Back-End Folder**
-   ```sh
-   cd spotify-app/backend
-   ```
-
-2. **Install Dependencies**
-   ```sh
-   npm install
-
-3. **Set Up Environment Variables**
-    Create a .env file in the backend directory with the following content, replacing the placeholders with your actual Spotify API credentials:
-   ```sh
-    CLIENT_ID=your_spotify_client_id
-    CLIENT_SECRET=your_spotify_client_secret
-
-
-## Usage
 
 Once everything is setup `cd` to the project folder. In order to start the frontend server.
 
