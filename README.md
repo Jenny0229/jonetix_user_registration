@@ -5,6 +5,7 @@ A login and user registration platform that uses SimpleWebAuthn.
 ## Table of Contents
 
 - [Usage](#usage)
+- [Features](#features)
 - [License](#license)
 - [Contact](#contact)
 
@@ -14,6 +15,8 @@ A login and user registration platform that uses SimpleWebAuthn.
    ```sh
    git clone https://github.com/Jenny0229/jonetix_user_registration.git
    ```
+### Database Setup
+TBD
 
 Once everything is setup `cd` to the project folder. In order to start the frontend server.
 
@@ -31,7 +34,7 @@ npm start
 Go to http://localhost:5173/ to access the app.
 
 ## Features
-
+TBD
 
 ## License
 
