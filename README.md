@@ -1,6 +1,6 @@
-# Spotify Forum
+# Jonetix SimpleWebAuthn
 
-A social media platform that uses Spotify OAuth to give users a place to discuss music.
+A login and user registration platform that uses SimpleWebAuthn.
 
 ## Table of Contents
 
