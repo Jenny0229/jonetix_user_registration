@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require("./firebase");
 const {generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse, generateAuthenticationOptions} = require('@simplewebauthn/server');
-const { addDoc, collection } = require("firebase/firestore");
+const { addDoc, collection, getDoc } = require("firebase/firestore");
 
 const app=express();
 const cors = require("cors");
@@ -36,6 +36,8 @@ let userPasskeys = [];
 let currentOptions;
 let client;
 
+let currentAuthOptions;
+
 // NOTE: firebase does not store Uint8 Arrays so convert to Base 64. But don't forget to convert back when fetch from DB
 
 // ROUTES
@@ -43,7 +45,7 @@ app.get('/', (req, res) => {
   res.send('Welcome to the backend server!');
 });
 
-
+// ROUTES for Registration
 // Endpoint for generateRegistrationOptions
 app.post('/generate-registration-options', async (req, res) => {
   // Retrieve the user
@@ -177,6 +179,111 @@ app.post('/verify-registration', async (req, res) => {
 
       // Respond to the client that the verification and data saving were successful
       return res.status(200).json({ verified: true });
+    } else {
+      // If verification is not successful, respond accordingly
+      console.log('Verification failed');
+      return res.status(200).json({ verified: false });
+    }
+  } catch (error) {
+    console.error('Verification failed with error:', error);
+    return res.status(400).send({ error: error.message });
+  }
+});
+
+
+// ROUTES for Authentication
+// Endpoint for generateAuthenticationOptions
+app.post('/generate-authentication-options', async (req, res) => {
+
+  // Retrieve the user
+  console.log('received', req.body);
+  client = req.body;
+
+  try {
+    // Retrieve any of the user's previously registered authenticators
+    // search within firebase
+    const passkeysRef = collection(db, 'passkeys');
+    const q = query(
+      passkeysRef,
+      where('User.username', '==', client.name),
+      where('User.email', '==', client.email)
+    );
+    // Retrieve and process the data
+    const querySnapshot = await getDocs(q);
+    const currUserPasskeys = [];
+    querySnapshot.forEach((doc) => {
+      currUserPasskeys.push(doc.data());
+    });
+
+    const options = await generateAuthenticationOptions({
+      rpID,
+      // Require users to use a previously-registered authenticator
+      allowCredentials: currUserPasskeys.map(passkey => ({
+        id: passkey.id,
+        transports: passkey.transports,
+      })),
+    });
+
+    // Remember these options for the user DB
+    currentAuthOptions = options;
+    console.log("debugging options");
+    console.log(currentAuthOptions);
+
+    // Send the options as a JSON response
+    res.json(options);
+  } catch (error) {
+    // If there's an error, send a 500 server error status code and the error message
+    res.status(500).send({ error: error.message });
+  }
+});
+
+
+// ENDPOINT for verify authentication
+app.post('/verify-authentication', async (req, res) => {
+  console.log('Received verification request:', req.body);
+
+  // get the specifc passkey the user selected for verification
+  // Retrieve a passkey from the DB that should match the `id` in the returned credential
+  let passkey;
+  try {
+    // Retrieve the document with the specified ID from the 'passkeys' collection
+    const passkeyDocRef = doc(db, 'passkeys', req.body.id);
+    const docSnapshot = await getDoc(passkeyDocRef);
+    
+    // Check if the document exists
+    if (docSnapshot.exists()) {
+      passkey = docSnapshot.data();
+      console.log('Passkey found:', passkey);
+    } else {
+      console.log('No passkey found with this ID.');
+    }
+  } catch (error) {
+    console.error('Error retrieving passkey:', error);
+  }
+
+  try {
+    // Attempt to verify the registration response
+    const verification = await verifyAuthenticationResponse({
+      response: req.body,
+      expectedChallenge: currentAuthOptions.challenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      authenticator: {
+        credentialID: passkey.id,
+        credentialPublicKey: passkey.publicKey,
+        counter: passkey.counter,
+        transports: passkey.transports,
+      },
+    });
+
+    const { verified } = verification;
+    console.log('Verification result:', verification);
+
+    // If verification is successful, update the user's authenticator's counter property in the DB:
+    if (verified) {
+      await updateDoc(passkeyDocRef, {
+        Counter: currentCounter + 1
+      });
     } else {
       // If verification is not successful, respond accordingly
       console.log('Verification failed');

@@ -26,8 +26,8 @@ function Login() {
     console.log('Submitting:', { username, email });
     
 
-    // GET registration options from the endpoint that calls
-    // @simplewebauthn/server -> generateRegistrationOptions()
+    // GET authentication options from the endpoint that calls
+    // @simplewebauthn/server -> generateAuthenticationOptions()
     const userObj = { // equivalent to UserModel for Typescript
       //id: generateUniqueId(), // Unique identifier 
       username: username,
@@ -35,14 +35,14 @@ function Login() {
     }
     console.log(userObj);
     // pass in userObj since we are registering a new user
-    const resp = await axios.post('http://localhost:5001/generate-registration-options', userObj);
+    const resp = await axios.post('http://localhost:5001/generate-authentication-options', userObj);
 
-    console.log('received registration options from server', resp.data);
+    console.log('received authentication options from server', resp.data);
 
-    let attResp;
+    let asseResp;
     try {
       // Pass the options to the authenticator and wait for a response
-      attResp = await startRegistration(resp.data);
+      asseResp = await startAuthentication(resp.data);
     } catch (error) {
       // Some basic error handling
       if (error.name === 'InvalidStateError') {
@@ -56,9 +56,9 @@ function Login() {
 
     let verificationResp;
     // POST the response to the endpoint that calls
-    // @simplewebauthn/server -> verifyRegistrationResponse()
+    // @simplewebauthn/server -> verifyAuthenticationResponse()
     try {
-      verificationResp = await axios.post('http://localhost:5001/verify-registration', attResp);
+      verificationResp = await axios.post('http://localhost:5001/verify-registration', asseResp);
     
       // Handle verification response as needed
       console.log('Verification response:', verificationResp.data);
