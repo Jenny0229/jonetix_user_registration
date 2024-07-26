@@ -1,6 +1,6 @@
 # Jonetix SimpleWebAuthn
 
-A login and user registration platform that uses SimpleWebAuthn.
+A login and user registration SPA that uses SimpleWebAuthn.
 
 ## Table of Contents
 
