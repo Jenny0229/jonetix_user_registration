@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require("./firebase");
 const {generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse, generateAuthenticationOptions} = require('@simplewebauthn/server');
-const { addDoc, collection, getDoc, query, where, getDocs } = require("firebase/firestore");
+const { addDoc, collection, getDoc, query, where, getDocs, updateDoc, doc } = require("firebase/firestore");
 
 const app=express();
 const cors = require("cors");
@@ -23,6 +23,9 @@ const origin = `http://${rpID}:5173`;
 let userPasskeys = [];
 let currentOptions;
 let client;
+const passkeysRef = collection(db, 'passkeys');
+const usersRef = collection(db, 'users');
+let doc_id; // the id which we will update counter
 
 // NOTE: firebase does not store Uint8 Arrays so convert to Base 64. But don't forget to convert back when fetch from DB
 
@@ -37,7 +40,7 @@ app.post('/generate-registration-options', async (req, res) => {
   console.log('received', req.body);
   client = req.body;
 
-  const passkeysRef = collection(db, 'passkeys');
+  //const passkeysRef = collection(db, 'passkeys');
   const q = query(
     passkeysRef,
     where('user.name', '==', client.username),
@@ -199,7 +202,7 @@ app.post('/generate-authentication-options', async (req, res) => {
   try {
     // Retrieve any of the user's previously registered authenticators
     // search within firebase
-    const passkeysRef = collection(db, 'passkeys');
+    //const passkeysRef = collection(db, 'passkeys');
     const q = query(
       passkeysRef,
       where('user.name', '==', client.username),
@@ -225,7 +228,7 @@ app.post('/generate-authentication-options', async (req, res) => {
 
     // Remember these options for the user DB
     currentOptions = options;
-    
+
     // Send the options as a JSON response
     res.json(options);
   } catch (error) {
@@ -244,13 +247,21 @@ app.post('/verify-authentication', async (req, res) => {
   let passkey;
   try {
     // Retrieve the document with the specified ID from the 'passkeys' collection
-    const passkeyDocRef = doc(db, 'passkeys', req.body.id);
-    const docSnapshot = await getDoc(passkeyDocRef);
+    const q = query(
+      passkeysRef,
+      where('id', '==', req.body.id)
+    );
+    // Retrieve and process the data
+    const querySnapshot = await getDocs(q);
     
     // Check if the document exists
-    if (docSnapshot.exists()) {
-      passkey = docSnapshot.data();
-      console.log('Passkey found:', passkey);
+    if (!querySnapshot.empty) {
+      querySnapshot.forEach((doc) => {
+        userPasskeys.push(doc.data());
+        //passkeyDocRef = doc(db, 'passkeys', doc.id);
+        doc_id = doc.id;
+      });
+      console.log('Passkey found:', userPasskeys);
     } else {
       console.log('No passkey found with this ID.');
     }
@@ -266,10 +277,10 @@ app.post('/verify-authentication', async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        credentialID: passkey.id,
-        credentialPublicKey: passkey.publicKey,
-        counter: passkey.counter,
-        transports: passkey.transports,
+        credentialID: userPasskeys[0].id,
+        credentialPublicKey: Buffer.from(userPasskeys[0].publicKey, 'base64'),
+        counter: userPasskeys[0].counter,
+        transports: userPasskeys[0].transports,
       },
     });
 
@@ -278,9 +289,35 @@ app.post('/verify-authentication', async (req, res) => {
 
     // If verification is successful, update the user's authenticator's counter property in the DB:
     if (verified) {
-      await updateDoc(passkeyDocRef, {
-        Counter: currentCounter + 1
+      // update passkey's counter
+      const docRef = doc(db, 'passkeys', doc_id);
+      const docSnapshot = await getDoc(docRef);
+      console.log("---testing passkeyDocRef");
+      console.log(docRef);
+      const currentCounter = docSnapshot.data().counter;
+      await updateDoc(docRef, {
+        counter: currentCounter + 1
       });
+
+      // update user's registrationInfo counter  
+      const q = query(
+        usersRef,
+        where('registrationInfo.credentialID', '==', docSnapshot.data().id)
+      );
+
+      let userDocRef;
+      let userCurrCounter;
+      const querySnapshot = await getDocs(q);
+      querySnapshot.forEach(async (userDoc) => {
+        userDocRef = doc(db, 'users', userDoc.id);
+        userCurrCounter = userDoc.data().registrationInfo.counter;
+      });
+      await updateDoc(userDocRef, {
+        'registrationInfo.counter': userCurrCounter + 1
+      });
+
+      // Respond to the client that the verification and data saving were successful
+      return res.status(200).json({ verified: true });
     } else {
       // If verification is not successful, respond accordingly
       console.log('Verification failed');

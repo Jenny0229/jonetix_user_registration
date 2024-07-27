@@ -58,7 +58,7 @@ function Login() {
     // POST the response to the endpoint that calls
     // @simplewebauthn/server -> verifyAuthenticationResponse()
     try {
-      verificationResp = await axios.post('http://localhost:5001/verify-registration', asseResp);
+      verificationResp = await axios.post('http://localhost:5001/verify-authentication', asseResp);
     
       // Handle verification response as needed
       console.log('Verification response:', verificationResp.data);
