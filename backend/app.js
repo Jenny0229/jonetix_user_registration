@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require("./firebase");
 const {generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse, generateAuthenticationOptions} = require('@simplewebauthn/server');
-const { addDoc, collection, getDoc } = require("firebase/firestore");
+const { addDoc, collection, getDoc, query, where, getDocs } = require("firebase/firestore");
 
 const app=express();
 const cors = require("cors");
@@ -15,28 +15,14 @@ app.listen(port, () => {
 app.use(express.json());
 
 // Defining some constants that describe your "Relying Party" (RP) server to authenticators:
-/**
- * Human-readable title for your website
- */
 const rpName = 'Jonetix SimpleWebAuthn Example';
-/**
- * A unique identifier for your website. 'localhost' is okay for
- * local dev
- */
 const rpID = 'localhost';
-/**
- * The URL at which registrations and authentications should occur.
- * 'http://localhost' and 'http://localhost:PORT' are also valid.
- * Do NOT include any trailing /
- */
 const origin = `http://${rpID}:5173`;
 
 // Globals
 let userPasskeys = [];
 let currentOptions;
 let client;
-
-let currentAuthOptions;
 
 // NOTE: firebase does not store Uint8 Arrays so convert to Base 64. But don't forget to convert back when fetch from DB
 
@@ -46,11 +32,25 @@ app.get('/', (req, res) => {
 });
 
 // ROUTES for Registration
-// Endpoint for generateRegistrationOptions
 app.post('/generate-registration-options', async (req, res) => {
   // Retrieve the user
   console.log('received', req.body);
   client = req.body;
+
+  const passkeysRef = collection(db, 'passkeys');
+  const q = query(
+    passkeysRef,
+    where('user.name', '==', client.username),
+    where('user.email', '==', client.email)
+  );
+  // Retrieve and process the data
+  const querySnapshot = await getDocs(q);
+
+  if (!querySnapshot.empty) {
+    querySnapshot.forEach((doc) => {
+      userPasskeys.push(doc.data());
+    });
+  }
 
   try {
     const options = await generateRegistrationOptions({
@@ -72,8 +72,6 @@ app.post('/generate-registration-options', async (req, res) => {
 
     // Remember these options for the user DB
     currentOptions = options;
-    console.log("debugging options");
-    console.log(currentOptions);
 
     // Send the options as a JSON response
     res.json(options);
@@ -84,7 +82,6 @@ app.post('/generate-registration-options', async (req, res) => {
 });
 
 
-// Endpoint for verifyRegistrationResponse
 // Endpoint for verifyRegistrationResponse and to save registration data if verification is successful
 app.post('/verify-registration', async (req, res) => {
   console.log('Received verification request:', req.body);
@@ -205,30 +202,30 @@ app.post('/generate-authentication-options', async (req, res) => {
     const passkeysRef = collection(db, 'passkeys');
     const q = query(
       passkeysRef,
-      where('User.username', '==', client.name),
-      where('User.email', '==', client.email)
+      where('user.name', '==', client.username),
+      where('user.email', '==', client.email)
     );
     // Retrieve and process the data
     const querySnapshot = await getDocs(q);
-    const currUserPasskeys = [];
-    querySnapshot.forEach((doc) => {
-      currUserPasskeys.push(doc.data());
-    });
+  
+    if (!querySnapshot.empty) {
+      querySnapshot.forEach((doc) => {
+        userPasskeys.push(doc.data());
+      });
+    }
 
     const options = await generateAuthenticationOptions({
       rpID,
       // Require users to use a previously-registered authenticator
-      allowCredentials: currUserPasskeys.map(passkey => ({
+      allowCredentials: userPasskeys.map(passkey => ({
         id: passkey.id,
         transports: passkey.transports,
       })),
     });
 
     // Remember these options for the user DB
-    currentAuthOptions = options;
-    console.log("debugging options");
-    console.log(currentAuthOptions);
-
+    currentOptions = options;
+    
     // Send the options as a JSON response
     res.json(options);
   } catch (error) {
@@ -265,7 +262,7 @@ app.post('/verify-authentication', async (req, res) => {
     // Attempt to verify the registration response
     const verification = await verifyAuthenticationResponse({
       response: req.body,
-      expectedChallenge: currentAuthOptions.challenge,
+      expectedChallenge: currentOptions.challenge,
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
