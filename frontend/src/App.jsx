@@ -1,11 +1,16 @@
 import React from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, Link } from 'react-router-dom';
 import './App.css';
 
 const App = () => {
   return (
     <div className="App">
-      <Outlet /> {/* This will render child routes */}
+      <h1>Welcome to Web Authentication</h1>
+      <nav>
+        <Link to="login"><button>Log In</button></Link>
+        <Link to="register"><button>Register</button></Link>
+      </nav>
+      <Outlet /> {/* This will render child routes like Login or Register */}
     </div>
   );
 };
