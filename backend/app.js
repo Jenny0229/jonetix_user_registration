@@ -269,6 +269,10 @@ app.post('/verify-authentication', async (req, res) => {
     console.error('Error retrieving passkey:', error);
   }
 
+  // give the correct document
+  const docRef = doc(db, 'passkeys', doc_id);
+  const docSnapshot = await getDoc(docRef);
+
   try {
     // Attempt to verify the registration response
     const verification = await verifyAuthenticationResponse({
@@ -277,10 +281,10 @@ app.post('/verify-authentication', async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        credentialID: userPasskeys[0].id,
-        credentialPublicKey: Buffer.from(userPasskeys[0].publicKey, 'base64'),
-        counter: userPasskeys[0].counter,
-        transports: userPasskeys[0].transports,
+        credentialID: docSnapshot.data().id,
+        credentialPublicKey: Buffer.from(docSnapshot.data().publicKey, 'base64'),
+        counter: docSnapshot.data().counter,
+        transports: docSnapshot.data().transports,
       },
     });
 
@@ -289,9 +293,6 @@ app.post('/verify-authentication', async (req, res) => {
 
     // If verification is successful, update the user's authenticator's counter property in the DB:
     if (verified) {
-      // update passkey's counter
-      const docRef = doc(db, 'passkeys', doc_id);
-      const docSnapshot = await getDoc(docRef);
       console.log("---testing passkeyDocRef");
       console.log(docRef);
       const currentCounter = docSnapshot.data().counter;
