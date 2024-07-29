@@ -40,7 +40,8 @@ app.post('/generate-registration-options', async (req, res) => {
   console.log('received', req.body);
   client = req.body;
 
-  //const passkeysRef = collection(db, 'passkeys');
+  userPasskeys = [];
+
   const q = query(
     passkeysRef,
     where('user.name', '==', client.username),
@@ -194,7 +195,7 @@ app.post('/verify-registration', async (req, res) => {
 // ROUTES for Authentication
 // Endpoint for generateAuthenticationOptions
 app.post('/generate-authentication-options', async (req, res) => {
-
+  userPasskeys = [];
   // Retrieve the user
   console.log('received', req.body);
   client = req.body;
@@ -244,7 +245,6 @@ app.post('/verify-authentication', async (req, res) => {
 
   // get the specifc passkey the user selected for verification
   // Retrieve a passkey from the DB that should match the `id` in the returned credential
-  let passkey;
   try {
     // Retrieve the document with the specified ID from the 'passkeys' collection
     const q = query(
